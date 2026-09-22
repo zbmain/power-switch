@@ -1,0 +1,58 @@
+[package]
+name = "power-switch"
+version = "0.1.0"
+description = "Local model configuration switcher for coding agents"
+edition = "2021"
+rust-version = "1.92"
+license = "MIT"
+default-run = "power-switch"
+
+[lib]
+name = "power_switch"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[[bin]]
+name = "power-switch"
+path = "src/main.rs"
+required-features = ["desktop"]
+
+[features]
+default = ["desktop"]
+desktop = ["dep:tauri", "dep:tauri-plugin-deep-link", "dep:tauri-plugin-single-instance", "dep:tauri-plugin-dialog"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+toml_edit = { version = "0.22", features = ["serde"] }
+toml = "0.8"
+url = "2"
+base64 = "0.22"
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
+dirs = "6"
+tempfile = "3"
+fs2 = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["json", "cookies", "rustls-tls"] }
+tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
+tauri = { version = "2", optional = true , features = [] }
+tauri-plugin-deep-link = { version = "2", optional = true }
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"], optional = true }
+tauri-plugin-dialog = { version = "2", optional = true }
+serde_yaml_ng = "0.10"
+
+[dev-dependencies]
+wiremock = "0.6"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[profile.release]
+lto = "thin"
+strip = true
+codegen-units = 1

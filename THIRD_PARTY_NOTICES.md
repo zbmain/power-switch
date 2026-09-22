@@ -1,7 +1,15 @@
-MIT License
+# 参考项目与许可
 
-Copyright (c) 2026 zbmain
-Copyright (c) 2026 power-switch contributors
+power-switch 的配置适配与界面为独立实现。设计研究参考以下 MIT 项目：
+
+- [CC Switch](https://github.com/farion1231/cc-switch)，Copyright (c) 2025 Jason Young。
+- [workbuddy-switch](https://github.com/changexbc/workbuddy-switch)，Copyright (c) 2026 wb-switch。
+
+本项目未复制其账号切换、代理或数据库实现。WorkBuddy 原生安装包仅用于核对配置格式与互操作性，未复制其中的程序代码。
+
+桌面组件和前端依赖的许可证随各 npm/Cargo 包提供，依赖版本固定于 pnpm-lock.yaml 和 src-tauri/Cargo.lock。
+
+## MIT License（参考项目声明）
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
