@@ -4,10 +4,9 @@
 
 本项目参考 [CC Switch CI](https://github.com/farion1231/cc-switch/blob/main/.github/workflows/ci.yml) 与 [标签发布流程](https://github.com/farion1231/cc-switch/blob/main/.github/workflows/release.yml)，采用以下策略：
 
-- `main` 是默认开发和发布基线；功能在短期分支开发，经 PR 检查后合并，不维护长期 `release` 分支。
-- 保留仓库原有 `master` 和历史提交；后续开发使用 `main`。
-- 推送 `main`、面向 `main` 的 PR、手动运行 CI 均执行质量检查，不创建 Release。
-- 推送 `v<SemVer>` 标签触发 Release，例如 `v0.1.0`、`v0.2.0-rc.1`。标签提交必须属于远程 `main` 历史。
+- `master` 是默认开发和发布基线；功能在短期分支开发，经 PR 检查后合并，不维护长期 `release` 分支。
+- 推送 `master`、面向 `master` 的 PR、手动运行 CI 均执行质量检查，不创建 Release。
+- 推送 `v<SemVer>` 标签触发 Release，例如 `v0.1.0`、`v0.2.0-rc.1`。标签提交必须属于远程 `master` 历史。
 - 每个新版本都先创建 **Pre-release**，包括没有 `rc` 后缀的标签。验证完成后，由维护者手动提升正式版。
 - 已发布正式版不可由流水线覆盖。不移动已发布标签，修复应发布新的补丁版本。
 
@@ -20,20 +19,20 @@
 ```sh
 gh auth login --hostname github.com --git-protocol ssh --web
 gh auth status
-gh repo edit zbmain/power-switch --default-branch main
+gh repo edit zbmain/power-switch --default-branch master
 ```
 
-更改默认分支前需确保 `main` 已推送。保持仓库现有可见性；私有仓库的下载链接仅对有权限的用户开放。GitHub 托管 runner 的可用额度遵循仓库所属账号计划。
+更改默认分支前需确保 `master` 已推送。保持仓库现有可见性；私有仓库的下载链接仅对有权限的用户开放。GitHub 托管 runner 的可用额度遵循仓库所属账号计划。
 
 CI 使用 Node.js 22、pnpm 10.18.3、Rust 1.92.0。前端依赖采用 `--frozen-lockfile`，Rust 检查、测试和发布构建采用 `--locked`。
 
 ## 准备一个版本
 
-在已同步的 `main` 上建立版本准备分支：
+在已同步的 `master` 上建立版本准备分支：
 
 ```sh
-git switch main
-git pull --ff-only origin main
+git switch master
+git pull --ff-only origin master
 git switch -c codex/release-v0.1.1
 pnpm install --frozen-lockfile
 ```
@@ -58,18 +57,18 @@ git diff --cached --check
 git diff --cached
 git commit -m "chore: prepare v0.1.1"
 git push -u origin codex/release-v0.1.1
-gh pr create --base main --title "Prepare v0.1.1" --body "Synchronize the application version for the next prerelease."
+gh pr create --base master --title "Prepare v0.1.1" --body "Synchronize the application version for the next prerelease."
 ```
 
 任何层级的 `.env`、`.venv`、`venv`、密钥和本地模型数据都不能暂存或提交。
 
 ## 打标签并自动发布
 
-PR 合并且 `main` CI 成功后：
+PR 合并且 `master` CI 成功后：
 
 ```sh
-git switch main
-git pull --ff-only origin main
+git switch master
+git pull --ff-only origin master
 pnpm release:check -- v0.1.1
 git status --short
 git tag -a v0.1.1 -m "power-switch v0.1.1"

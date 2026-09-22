@@ -24,7 +24,7 @@ just icons                # 从母版重新生成平台图标
 
 首版未使用开发者证书签名或 Apple 公证，系统可能提示未知发布者。Windows ZIP 需要已安装 WebView2，仍使用用户应用数据目录，不是数据随身携带的便携模式。Linux 目前尚不支持 New API 系统凭证持久化，其他平台差异见 [New API 文档](docs/new-api.md)。
 
-向 `main` 提交代码或发起 PR 会运行 CI。推送 `v*` 版本标签后，GitHub Actions 校验版本、运行测试、构建全部平台，再统一创建预发布；正式版由维护者验证后手动提升。完整操作见 [发布说明](docs/releasing.md)。应用暂不提供内置自动更新。
+向 `master` 提交代码或发起 PR 会运行 CI。推送 `v*` 版本标签后，GitHub Actions 校验版本、运行测试、构建全部平台，再统一创建预发布；正式版由维护者验证后手动提升。完整操作见 [发布说明](docs/releasing.md)。应用暂不提供内置自动更新。
 
 ## 使用流程
 
