@@ -143,7 +143,7 @@ export function NewApiDialog({
     setBusy("catalog");
     setCatalog(null);
     void newApi
-      .catalog(connection.baseUrl, status.user.id)
+      .catalog(connection.baseUrl, status.user.id, "default")
       .then((value) => {
         if (!canceled) setCatalog(value);
       })
@@ -245,18 +245,7 @@ export function NewApiDialog({
     setStatus(null);
   }
 
-  /** Fetch a chosen group again rather than reusing another group's available models. */
-  async function selectGroup(group: string) {
-    if (!connection || !status?.user) return;
-    setCreated(null);
-    setCatalog(null);
-    setModelId("");
-    setReplaceInvalid(false);
-    setRestartUncertain(false);
-    setCatalog(await newApi.catalog(connection.baseUrl, status.user.id, group));
-  }
-
-  /** Save a platform/model display name while retaining the selected ID for API calls. */
+  /** Save a platform/model display name while using the fixed default API group. */
   function submit(event: FormEvent) {
     event.preventDefault();
     if (
@@ -271,7 +260,7 @@ export function NewApiDialog({
       const result = await newApi.importModel({
         baseUrl: connection.baseUrl,
         userId: status.user!.id,
-        group: catalog.selectedGroup,
+        group: "default",
         modelId,
         protocol,
         name: `${platformName.trim()} · ${modelId}`,
@@ -315,9 +304,10 @@ export function NewApiDialog({
   return (
     <Modal
       title="从 New API 添加模型"
-      description="完成钉钉登录，自动取得专属密钥并保存模型配置。"
+      description="连接账号，选择客户端与模型，创建专属密钥。"
       onClose={onClose}
       busy={Boolean(busy)}
+      className="new-api-modal"
       wide
     >
       <div className="new-api-dialog">
@@ -329,6 +319,13 @@ export function NewApiDialog({
             </span>
           </div>
         )}
+        <div className="new-api-step-heading">
+          <span className="new-api-step-number">01</span>
+          <div>
+            <strong>连接 New API</strong>
+            <p>确认实例地址并登录账号，应用会读取你可用的模型。</p>
+          </div>
+        </div>
         <section className="new-api-section">
           <label className="field">
             New API 实例地址
@@ -418,7 +415,7 @@ export function NewApiDialog({
         {busy === "catalog" && (
           <p role="status" className="new-api-progress">
             <LoaderCircle size={17} className="spin" />
-            正在读取分组和可用模型…
+            正在读取默认分组的可用模型…
           </p>
         )}
         {connected && !catalog && !busy && (
@@ -427,7 +424,11 @@ export function NewApiDialog({
             onClick={() =>
               void run("catalog", async () =>
                 setCatalog(
-                  await newApi.catalog(connection!.baseUrl, status.user!.id),
+                  await newApi.catalog(
+                    connection!.baseUrl,
+                    status.user!.id,
+                    "default",
+                  ),
                 ),
               )
             }
@@ -437,9 +438,15 @@ export function NewApiDialog({
         )}
         {connected && catalog && !created && (
           <form onSubmit={submit} className="new-api-form">
-            <div className="form-grid">
+            <div className="new-api-step-heading">
+              <span className="new-api-step-number">02</span>
+              <div>
+                <strong>选择模型</strong>
+              </div>
+            </div>
+            <div className="new-api-fields">
               <label className="field">
-                目标客户端
+                目前客户端
                 <select
                   value={agent}
                   disabled={Boolean(busy)}
@@ -456,62 +463,51 @@ export function NewApiDialog({
                 </select>
               </label>
               <label className="field">
-                分组
-                <select
-                  value={catalog.selectedGroup}
+                平台名称
+                <input
+                  value={platformName}
+                  required
+                  maxLength={256}
                   disabled={Boolean(busy)}
-                  onChange={(e) =>
-                    void run("catalog", () => selectGroup(e.target.value))
-                  }
+                  onChange={(e) => setPlatformName(e.target.value)}
+                />
+              </label>
+              <label className="field">
+                模型
+                <select
+                  required
+                  value={modelId}
+                  disabled={Boolean(busy) || !candidates.length}
+                  onChange={(e) => {
+                    setModelId(e.target.value);
+                    setError(null);
+                  }}
                 >
-                  {catalog.groups.map((group) => (
-                    <option key={group.id} value={group.id}>
-                      {group.id}
-                      {group.label !== group.id ? ` · ${group.label}` : ""}
+                  {!candidates.length && (
+                    <option value="">没有兼容此客户端的模型</option>
+                  )}
+                  {candidates.map((model) => (
+                    <option key={model.modelId} value={model.modelId}>
+                      {model.modelId}
                     </option>
                   ))}
                 </select>
+                <span className="field-hint">
+                  仅显示 default 分组中支持当前客户端的模型。
+                </span>
               </label>
             </div>
-            <label className="field">
-              模型
-              <select
-                required
-                value={modelId}
-                disabled={Boolean(busy) || !candidates.length}
-                onChange={(e) => {
-                  setModelId(e.target.value);
-                  setError(null);
-                }}
-              >
-                {!candidates.length && (
-                  <option value="">没有兼容此客户端的模型</option>
-                )}
-                {candidates.map((model) => (
-                  <option key={model.modelId} value={model.modelId}>
-                    {model.modelId}
-                  </option>
-                ))}
-              </select>
-              <span className="field-hint">
-                仅显示当前分组可用且声明支持对应协议的模型。
-              </span>
-            </label>
-            <label className="field">
-              平台名称
-              <input
-                value={platformName}
-                required
-                maxLength={256}
-                disabled={Boolean(busy)}
-                onChange={(e) => setPlatformName(e.target.value)}
-              />
-            </label>
+            <div className="new-api-step-heading">
+              <span className="new-api-step-number">03</span>
+              <div>
+                <strong>创建专属密钥</strong>
+                <p>保存后进入模型库，再选择应用到 Agent。</p>
+              </div>
+            </div>
             <div className="new-api-policy">
               <KeyRound size={18} />
               <div>
                 <strong>专属密钥 · 长期有效</strong>
-                <p>仅允许所选模型，沿用账户额度。重复添加会复用密钥。</p>
                 <code>
                   {protocol === "anthropic-messages"
                     ? connection?.baseUrl

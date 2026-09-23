@@ -6,6 +6,7 @@ use crate::{
 use std::sync::Mutex;
 use tauri::{Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
+use tauri_plugin_opener::OpenerExt;
 
 type Shared<'a> = State<'a, Mutex<Engine>>;
 
@@ -25,6 +26,17 @@ fn get_data(state: Shared<'_>) -> AppResult<AppData> {
 fn save_model(state: Shared<'_>, model: ModelConfig) -> AppResult<ModelConfig> {
     with_engine(state, |e| e.upsert(model))
 }
+/// Test a draft without holding the model-store lock or writing any Agent configuration.
+#[tauri::command]
+async fn test_model(model: ModelConfig) -> AppResult<crate::model_probe::ModelTestResult> {
+    crate::model_probe::test_model(&model).await
+}
+
+/// Fetch selectable model IDs from the draft connection without saving it.
+#[tauri::command]
+async fn list_models(connection: crate::model_catalog::ModelConnection) -> AppResult<Vec<String>> {
+    crate::model_catalog::list_models(connection).await
+}
 /// Delete a library record without changing an Agent's files.
 #[tauri::command]
 fn delete_model(state: Shared<'_>, id: String) -> AppResult<()> {
@@ -37,13 +49,34 @@ fn save_settings(state: Shared<'_>, settings: Settings) -> AppResult<()> {
 }
 /// Prepare a model application for user review.
 #[tauri::command]
-fn preview_apply(state: Shared<'_>, id: String, agents: Vec<AgentKind>) -> AppResult<ApplyPreview> {
-    with_engine(state, |e| e.preview_apply(&id, &agents))
+fn preview_apply(
+    state: Shared<'_>,
+    id: String,
+    agents: Vec<AgentKind>,
+    select_workbuddy_model: bool,
+) -> AppResult<ApplyPreview> {
+    with_engine(state, |e| {
+        e.preview_apply_with_selection(&id, &agents, select_workbuddy_model)
+    })
 }
-/// Commit only the exact contents of a confirmed preview.
+/// Commit the confirmed preview, then allow WorkBuddy to reload its model list before opening home.
 #[tauri::command]
-fn apply_preview(state: Shared<'_>, token: String) -> AppResult<ApplyResult> {
-    with_engine(state, |e| e.apply(&token))
+async fn apply_preview(
+    app: tauri::AppHandle,
+    state: Shared<'_>,
+    token: String,
+) -> AppResult<ApplyResult> {
+    let mut result = with_engine(state, |e| e.apply(&token))?;
+    // The model-file watcher reloads asynchronously; wait before opening the new-task page.
+    if result.workbuddy_model_id.is_some() {
+        tokio::time::sleep(std::time::Duration::from_millis(1_200)).await;
+    }
+    crate::workbuddy_link::finish_selection(&mut result, |url| {
+        app.opener()
+            .open_url(url, None::<&str>)
+            .map_err(|_| "无法唤起 WorkBuddy".into())
+    });
+    Ok(result)
 }
 /// Release canceled preview contents.
 #[tauri::command]
@@ -91,6 +124,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let paths = Paths::discover().map_err(std::io::Error::other)?;
             crate::new_api_desktop::setup(app.handle(), paths.data.clone());
@@ -113,6 +147,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_data,
             save_model,
+            test_model,
+            list_models,
             delete_model,
             save_settings,
             preview_apply,

@@ -59,6 +59,7 @@ struct Pending {
     changes: Vec<Change>,
     dependencies: Vec<Snapshot>,
     created_at: u64,
+    workbuddy_model_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -91,6 +92,9 @@ pub struct ApplyResult {
     pub backup_id: String,
     pub paths: Vec<PathBuf>,
     pub message: String,
+    pub workbuddy_selection: Option<String>,
+    #[serde(skip_serializing)]
+    pub workbuddy_model_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -236,7 +240,6 @@ impl Engine {
         };
         for other in &mut store.models {
             if siblings.contains(&other.id)
-                && other.model_id == model.model_id
                 && other.base_url == crate::new_api::api_base(&base, other.protocol)
             {
                 other.api_key = model.api_key.clone();
@@ -272,8 +275,21 @@ impl Engine {
 
     /// Prepare a credential-redacted, expiring preview with immutable in-memory write contents.
     pub fn preview_apply(&mut self, id: &str, agents: &[AgentKind]) -> AppResult<ApplyPreview> {
+        self.preview_apply_with_selection(id, agents, false)
+    }
+
+    /// Bind an optional WorkBuddy new-task selection to the same guarded preview token.
+    pub fn preview_apply_with_selection(
+        &mut self,
+        id: &str,
+        agents: &[AgentKind],
+        select_workbuddy_model: bool,
+    ) -> AppResult<ApplyPreview> {
         if agents.is_empty() {
             return Err("请至少选择一个 Agent".into());
+        }
+        if select_workbuddy_model && !agents.contains(&AgentKind::Workbuddy) {
+            return Err("自动选择 WorkBuddy 模型前，请先勾选 WorkBuddy".into());
         }
         let store = self.load()?;
         let mut model = store
@@ -293,16 +309,26 @@ impl Engine {
             let p = adapters::project(&self.paths, &store.settings, &model, *agent)?;
             changes.extend(p.changes);
             dependencies.extend(p.dependencies);
-            notices.extend(p.notices);
+            // Opening WorkBuddy after the write has its own, more specific manual-selection notice.
+            if *agent != AgentKind::Workbuddy || !select_workbuddy_model {
+                notices.extend(p.notices);
+            }
         }
         if model.api_key.is_empty() {
             notices.push("此模型未填写 API Key；仅适用于无需认证的服务。".into());
+        }
+        if select_workbuddy_model {
+            notices.push(
+                "配置写入后将打开 WorkBuddy 新建任务页；请手动选择此模型。WorkBuddy 5.6.2 虽接收模型深链，却未实际切换或保存模型。"
+                    .into(),
+            );
         }
         self.prepare(
             format!("应用模型 · {}", model.name),
             changes,
             dependencies,
             notices,
+            select_workbuddy_model.then_some(model.model_id),
         )
     }
 
@@ -313,6 +339,7 @@ impl Engine {
         changes: Vec<Change>,
         dependencies: Vec<Snapshot>,
         notices: Vec<String>,
+        workbuddy_model_id: Option<String>,
     ) -> AppResult<ApplyPreview> {
         self.pending
             .retain(|_, p| now().saturating_sub(p.created_at) < 600);
@@ -352,6 +379,7 @@ impl Engine {
                 changes,
                 dependencies,
                 created_at: now(),
+                workbuddy_model_id,
             },
         );
         Ok(ApplyPreview {
@@ -471,6 +499,8 @@ impl Engine {
             backup_id: id,
             paths: backup.record.paths,
             message: "配置已写入，尚未验证模型调用。".into(),
+            workbuddy_selection: None,
+            workbuddy_model_id: p.workbuddy_model_id,
         })
     }
 
@@ -549,6 +579,7 @@ impl Engine {
             changes,
             vec![],
             vec!["恢复将覆盖这些文件的当前内容；确认后会先备份当前状态。".into()],
+            None,
         )
     }
 
@@ -664,7 +695,7 @@ mod tests {
             })
             .collect();
         let p = engine
-            .prepare("test".into(), changes, vec![], vec![])
+            .prepare("test".into(), changes, vec![], vec![], Some("model".into()))
             .unwrap();
         let mut writes = 0;
         let error = engine

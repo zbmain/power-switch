@@ -47,6 +47,7 @@ fn new_api_import_reuses_records_and_rotates_only_owned_models() {
     let mut chat = model(Protocol::OpenaiChat);
     chat.id = uuid::Uuid::new_v4().to_string();
     let mut claude = model(Protocol::AnthropicMessages);
+    claude.model_id = "other-model".into();
     claude.id = uuid::Uuid::new_v4().to_string();
     claude.base_url = "https://api.example.com".into();
     let siblings = vec![chat.id.clone(), claude.id.clone()];
@@ -190,6 +191,38 @@ fn save_and_cancel_have_no_agent_side_effects() {
     engine.cancel_preview(&preview.token);
     assert!(engine.apply(&preview.token).is_err());
     assert!(!path.exists());
+}
+
+/// WorkBuddy handoff belongs to a confirmed apply and cannot accompany another Agent or restore.
+#[test]
+fn workbuddy_selection_is_bound_to_successful_apply_only() {
+    let (_temp, mut engine) = isolated();
+    let model = engine.upsert(model(Protocol::OpenaiChat)).unwrap();
+    assert!(engine
+        .preview_apply_with_selection(&model.id, &[AgentKind::Claude], true)
+        .is_err());
+    let unchecked = engine
+        .preview_apply_with_selection(&model.id, &[AgentKind::Workbuddy], false)
+        .unwrap();
+    assert!(!unchecked
+        .notices
+        .iter()
+        .any(|notice| notice.contains("唤起")));
+    engine.cancel_preview(&unchecked.token);
+    let checked = engine
+        .preview_apply_with_selection(&model.id, &[AgentKind::Workbuddy], true)
+        .unwrap();
+    assert!(checked.notices.iter().any(|notice| notice.contains("打开")));
+    assert!(checked
+        .notices
+        .iter()
+        .any(|notice| notice.contains("手动选择")));
+    let result = engine.apply(&checked.token).unwrap();
+    assert_eq!(result.workbuddy_model_id.as_deref(), Some("example-model"));
+    assert!(engine.apply(&checked.token).is_err());
+    let restore = engine.preview_restore(&result.backup_id).unwrap();
+    let restored = engine.apply(&restore.token).unwrap();
+    assert!(restored.workbuddy_model_id.is_none());
 }
 
 /// Apply and restore create independent recovery records and preserve original absence.

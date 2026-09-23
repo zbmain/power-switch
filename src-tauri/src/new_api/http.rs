@@ -26,7 +26,7 @@ impl ApiClient {
             .redirect(Policy::none())
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
-            .user_agent("power-switch/0.1.0")
+            .user_agent("power-switch/0.1.1")
             .build()
             .map_err(|_| Error::new("network", "无法初始化 HTTPS 客户端"))?;
         Ok(Self {

@@ -61,6 +61,24 @@ Claude Code 已通过隔离目录的合并与保留测试；未发起真实模�
 cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --example acceptance -- restore /private/tmp/power-switch-workbuddy-acceptance 5ab36701-29d6-4c2a-9e73-418999dbc133
 ```
 
+### WorkBuddy 新任务模型选择（2026-09-23）
+
+在 macOS Apple Silicon 的 power-switch 0.1.0 测试包与 WorkBuddy 5.5.6 上，使用本机已有的 `fast` 模型验证：power-switch 的“测试模型”收到有效文本回复，显示“测试通过，耗时2.01 秒”。WorkBuddy 测试前的 `~/.workbuddy/models.json` 为 `[]`，先备份到仓库外，再通过应用二次确认写入。
+
+- WorkBuddy 已运行时，默认勾选自动选中并应用配置后，新建任务页模型选择器显示 `winwin · fast:fast`；已有任务仍在侧边栏，未被打开或切换。
+- 关闭自动选中并退出 WorkBuddy 后，再次应用配置：文件写入成功，WorkBuddy 保持关闭。
+- 重新勾选自动选中，在 WorkBuddy 关闭状态下应用：WorkBuddy 冷启动进入新建任务页，模型选择器仍显示 `winwin · fast:fast`。
+- 从“模型配置备份”预览并恢复首次写入前的备份后，`models.json` 的 SHA-256 与测试前及额外备份完全相同：`4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945`。恢复操作没有唤起 WorkBuddy。
+
+实测发现该版本的 WorkBuddy 会给自定义模型 ID 加 `custom-local:` 前缀。以下结果只说明 5.5.6 的历史行为，不代表新版本仍支持自动选中，也不代表 WorkBuddy 内的模型调用已经验证。
+
+### WorkBuddy 5.6.2 回归测试（2026-09-23）
+
+- 模型 `auto` 已在 WorkBuddy 自定义模型列表中可见，手动选择后模型选择器显示 `winwin · auto:auto`，切换到“助理”再返回“新建任务”仍保持该模型。
+- 发送 `workbuddy://switch-model?modelId=custom-local%3Aauto` 时，WorkBuddy 日志记录深链已送达并由 `switch-model` 处理器消费，但模型选择器及持久的新任务模型偏好都没有改变。原始 `auto` ID 同样无效。
+- 发送 `workbuddy://task?action=start&prompt=...&model=custom-local%3Aauto` 时草稿正常填入，模型未改变。改用内置模型 `glm-5.3` 仍未改变模型，排除仅由自定义模型 ID 造成的失败。测试草稿已清除。
+- `workbuddy://home` 能从已有任务打开新建任务页，并保持手动选择过的模型。因此当前应用改为只提供“写入后打开新建任务页”，明确提示手动选择，不再声称自动预选成功。
+
 ## 平台与发布范围
 
 macOS Apple Silicon 本机已运行；Intel、Windows x64、Linux x64 已提供构建矩阵，但尚未在对应系统执行，安装、文件权限、系统链接和真实 Agent 联调均标记待验证。正式签名、公证和公开发布不在本轮范围。

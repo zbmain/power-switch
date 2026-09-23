@@ -6,6 +6,7 @@ import type {
   ApplyResult,
   ImportPreview,
   ModelConfig,
+  ModelTestResult,
   Settings,
 } from "./types";
 
@@ -22,17 +23,28 @@ async function call<T>(
 }
 
 export const api = {
+  /** Fetch provider model identifiers using only the current connection settings. */
+  listModels: (
+    connection: Pick<ModelConfig, "protocol" | "baseUrl" | "apiKey">,
+  ) => call<string[]>("list_models", { connection }),
   /** Read the desktop library and current target-file locations. */
   data: () => call<AppData>("get_data"),
   /** Persist a model without applying it to an Agent. */
   save: (model: ModelConfig) => call<ModelConfig>("save_model", { model }),
+  /** Send the literal test prompt through the selected native model protocol without saving. */
+  testModel: (model: ModelConfig) =>
+    call<ModelTestResult>("test_model", { model }),
   /** Delete a model from the library only. */
   delete: (id: string) => call<void>("delete_model", { id }),
   /** Persist validated appearance and path settings. */
   settings: (settings: Settings) => call<void>("save_settings", { settings }),
   /** Generate the second-confirmation preview. */
-  preview: (id: string, agents: AgentKind[]) =>
-    call<ApplyPreview>("preview_apply", { id, agents }),
+  preview: (id: string, agents: AgentKind[], selectWorkbuddyModel: boolean) =>
+    call<ApplyPreview>("preview_apply", {
+      id,
+      agents,
+      selectWorkbuddyModel,
+    }),
   /** Apply only a previously prepared, unmodified preview. */
   apply: (token: string) => call<ApplyResult>("apply_preview", { token }),
   /** Discard canceled secret-bearing projections. */

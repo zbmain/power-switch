@@ -5,7 +5,7 @@ use std::{
 };
 use tempfile::TempDir;
 use wiremock::{
-    matchers::{body_partial_json, header, method, path},
+    matchers::{body_partial_json, header, method, path, path_regex},
     Mock, MockServer, Request, ResponseTemplate,
 };
 
@@ -76,7 +76,6 @@ async fn fixture() -> Fixture {
     }}))).mount(&server).await;
     Mock::given(method("GET"))
         .and(path("/api/user/self/groups"))
-        .and(header("New-Api-User", "77"))
         .respond_with(
             ResponseTemplate::new(200)
                 .set_body_json(json!({"success":true,"data":{"staff":{"desc":"员工组"}}})),
@@ -85,7 +84,6 @@ async fn fixture() -> Fixture {
         .await;
     Mock::given(method("GET"))
         .and(path("/api/user/models"))
-        .and(header("New-Api-User", "77"))
         .respond_with(ResponseTemplate::new(200).set_body_json(
             json!({"success":true,"data":["model-one","responses-only","no-metadata"]}),
         ))
@@ -112,7 +110,6 @@ async fn fixture() -> Fixture {
     let search_tokens = tokens.clone();
     Mock::given(method("GET"))
         .and(path("/api/token/search"))
-        .and(header("New-Api-User", "77"))
         .respond_with(move |request: &Request| {
             let keyword = request
                 .url
@@ -134,8 +131,7 @@ async fn fixture() -> Fixture {
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/token/1/key"))
-        .and(header("New-Api-User", "77"))
+        .and(path_regex(r"^/api/token/[1-9][0-9]*/key$"))
         .respond_with(
             ResponseTemplate::new(200)
                 .set_body_json(json!({"success":true,"data":{"key":"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKL"}})),
@@ -181,14 +177,35 @@ fn request(base: &str) -> ImportRequest {
 /// Emulate an insert that can succeed even when its HTTP response fails.
 async fn mount_create(fixture: &Fixture, response_status: u16, expected: u64) {
     let tokens = fixture.tokens.clone();
-    Mock::given(method("POST")).and(path("/api/token/")).and(header("New-Api-User", "77"))
-        .and(body_partial_json(json!({"expired_time":-1,"unlimited_quota":true,"model_limits_enabled":true,"group":"staff"})))
+    let user_id = fixture.connector.session.as_ref().unwrap().user.id;
+    Mock::given(method("POST"))
+        .and(path("/api/token/"))
+        .and(header("New-Api-User", user_id.to_string().as_str()))
+        .and(body_partial_json(
+            json!({"expired_time":-1,"unlimited_quota":true,"group":"staff"}),
+        ))
         .respond_with(move |request: &Request| {
             let mut token: Value = request.body_json().unwrap();
-            token["id"] = json!(1); token["user_id"] = json!(77); token["status"] = json!(1); token["key"] = json!("sk-***masked***");
-            tokens.lock().unwrap().push(token);
+            assert!(token.get("model_limits_enabled").is_none());
+            assert!(token.get("model_limits").is_none());
+            let mut records = tokens.lock().unwrap();
+            token["id"] = json!(
+                records
+                    .iter()
+                    .filter_map(|t| t["id"].as_i64())
+                    .max()
+                    .unwrap_or(0)
+                    + 1
+            );
+            token["user_id"] = json!(user_id);
+            token["status"] = json!(1);
+            token["key"] = json!("sk-***masked***");
+            records.push(token);
             ResponseTemplate::new(response_status).set_body_json(json!({"success":true}))
-        }).expect(expected).mount(&fixture.server).await;
+        })
+        .expect(expected)
+        .mount(&fixture.server)
+        .await;
 }
 
 /// URL and callback validation must reject credentials, non-HTTPS URLs, duplicate state and replay inputs.
@@ -234,7 +251,78 @@ fn validates_urls_callbacks_and_native_base_conventions() {
         api_base("https://site", Protocol::OpenaiResponses),
         "https://site/v1"
     );
-    assert!(token_name().len() <= 50);
+    assert!(token_name(&user()).len() <= 50);
+}
+
+/// OAuth names become lowercase pinyin, with safe fallbacks and an intact suffix at the API limit.
+#[test]
+fn token_names_use_oauth_name_pinyin() {
+    let mut account = user();
+    account.display_name = " 赵斌 ".into();
+    assert_eq!(token_name(&account), "zhaobin-ps");
+    account.display_name = "Zhao Bin".into();
+    assert_eq!(token_name(&account), "zhaobin-ps");
+    account.display_name = "吕明".into();
+    assert_eq!(token_name(&account), "lvming-ps");
+    account.display_name = String::new();
+    assert_eq!(token_name(&account), "fixture-ps");
+    account.display_name = "张".repeat(40);
+    assert!(token_name(&account).len() <= 50);
+    assert!(token_name(&account).ends_with("-ps"));
+    account.display_name = "吕".repeat(40);
+    assert_eq!(token_name(&account).len(), 50);
+    account.display_name = "☀️".into();
+    account.username.clear();
+    assert_eq!(token_name(&account), "user77-ps");
+}
+
+/// Identical human-readable names must preserve each model's ID and ignore pre-existing unrelated keys.
+#[tokio::test]
+async fn same_name_tokens_are_distinguished_by_creation_snapshot_and_id() {
+    let mut f = fixture().await;
+    f.connector.session.as_mut().unwrap().user.display_name = "赵斌".into();
+    f.tokens.lock().unwrap().push(json!({"id":99,"user_id":77,"name":"zhaobin-ps","status":1,"group":"staff","model_limits_enabled":true,"model_limits":"model-one","expired_time":-1,"unlimited_quota":true}));
+    mount_create(&f, 200, 2).await;
+    let first = f
+        .connector
+        .prepare_import(request(&f.server.uri()))
+        .await
+        .unwrap();
+    assert_eq!(
+        f.connector.journal().unwrap().records[0].token_id,
+        Some(100)
+    );
+    let mut second = request(&f.server.uri());
+    second.model_id = "responses-only".into();
+    second.protocol = Protocol::OpenaiResponses;
+    second.context_window = Some(128000);
+    f.connector.prepare_import(second).await.unwrap();
+    assert_eq!(f.connector.journal().unwrap().records.len(), 1);
+    assert_eq!(
+        f.connector.journal().unwrap().records[0].token_id,
+        Some(100)
+    );
+    let repeated = f
+        .connector
+        .prepare_import(request(&f.server.uri()))
+        .await
+        .unwrap();
+    assert!(repeated.reused);
+    assert_eq!(repeated.model.id, first.model.id);
+    f.tokens.lock().unwrap()[1]["status"] = json!(2);
+    let mut replacement = request(&f.server.uri());
+    replacement.replace_invalid = true;
+    f.connector.prepare_import(replacement).await.unwrap();
+    assert_eq!(
+        f.connector.journal().unwrap().records[0].token_id,
+        Some(101)
+    );
+    assert!(f
+        .tokens
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|t| t["name"] == "zhaobin-ps"));
 }
 
 /// The picker must exclude inaccessible models and models with no compatible protocol metadata.
@@ -297,6 +385,21 @@ async fn creates_reads_full_key_and_reuses_across_protocols() {
     assert_eq!(other.model.base_url, f.server.uri());
     assert_ne!(other.model.id, first.model.id);
     assert_eq!(other.siblings.len(), 2);
+    Mock::given(method("GET"))
+        .and(path("/api/user/self/groups"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"success":true,"data":{"staff":{"desc":"员工组"},"alternate":{"desc":"其他组"}}})))
+        .with_priority(1)
+        .mount(&f.server).await;
+    let mut second_model = request(&f.server.uri());
+    second_model.group = "alternate".into();
+    second_model.model_id = "responses-only".into();
+    second_model.protocol = Protocol::OpenaiResponses;
+    second_model.context_window = Some(128000);
+    let second = f.connector.prepare_import(second_model).await.unwrap();
+    assert!(second.reused);
+    assert_eq!(second.siblings.len(), 3);
+    assert_eq!(f.tokens.lock().unwrap().len(), 1);
+    assert_eq!(f.connector.journal().unwrap().records[0].group, "staff");
     let journal = std::fs::read_to_string(f.dir.path().join("new-api.json")).unwrap();
     assert!(!journal.contains("sk-test-key"));
     assert!(!journal.contains("session="));
@@ -318,6 +421,95 @@ async fn creates_reads_full_key_and_reuses_across_protocols() {
             0o600
         );
     }
+}
+
+/// A version-one restricted-token journal migrates model identities to one unrestricted account token.
+#[tokio::test]
+async fn migrates_legacy_models_without_deleting_remote_tokens() {
+    let mut f = fixture().await;
+    let old_id = Uuid::new_v4().to_string();
+    let old = json!({"version":1,"records":[{"base_url":f.server.uri(),"user_id":77,"group":"staff","model_id":"model-one","name":"legacy-ps","token_id":42,"phase":"ready","models":[{"protocol":"openai-chat","id":old_id}]}]});
+    std::fs::write(
+        f.dir.path().join("new-api.json"),
+        serde_json::to_vec(&old).unwrap(),
+    )
+    .unwrap();
+    f.tokens.lock().unwrap().push(json!({"id":42,"user_id":77,"name":"legacy-ps","status":1,"group":"staff","model_limits_enabled":true,"model_limits":"model-one","expired_time":-1,"unlimited_quota":true}));
+    mount_create(&f, 200, 1).await;
+    let mut next = request(&f.server.uri());
+    next.model_id = "responses-only".into();
+    next.protocol = Protocol::OpenaiResponses;
+    next.context_window = Some(128000);
+    let migrated = f.connector.prepare_import(next).await.unwrap();
+    assert!(!migrated.reused);
+    assert!(migrated.siblings.contains(&old_id));
+    assert!(f.tokens.lock().unwrap().iter().any(|t| t["id"] == 42));
+    let journal = f.connector.journal().unwrap();
+    assert_eq!(journal.version, 2);
+    assert_eq!(journal.records.len(), 2);
+    assert!(journal.records[1].unrestricted);
+    assert_eq!(journal.records[1].models[0].model_id, "model-one");
+}
+
+/// A shared token cannot silently create another token when its original group lacks the requested model.
+#[tokio::test]
+async fn shared_token_with_missing_model_stops_without_second_creation() {
+    let mut f = fixture().await;
+    mount_create(&f, 200, 1).await;
+    f.connector
+        .prepare_import(request(&f.server.uri()))
+        .await
+        .unwrap();
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"data":[{"id":"model-one"}]})),
+        )
+        .with_priority(1)
+        .mount(&f.server)
+        .await;
+    let mut next = request(&f.server.uri());
+    next.model_id = "responses-only".into();
+    next.protocol = Protocol::OpenaiResponses;
+    next.context_window = Some(128000);
+    assert_eq!(
+        f.connector.prepare_import(next).await.err().unwrap().code,
+        "group_access"
+    );
+    assert_eq!(f.tokens.lock().unwrap().len(), 1);
+}
+
+/// Account and instance boundaries each require an independent shared token.
+#[tokio::test]
+async fn separates_shared_tokens_by_account_and_instance() {
+    let mut first = fixture().await;
+    mount_create(&first, 200, 1).await;
+    first
+        .connector
+        .prepare_import(request(&first.server.uri()))
+        .await
+        .unwrap();
+    first.connector.session.as_mut().unwrap().user.id = 88;
+    mount_create(&first, 200, 1).await;
+    let mut account_request = request(&first.server.uri());
+    account_request.user_id = 88;
+    first
+        .connector
+        .prepare_import(account_request)
+        .await
+        .unwrap();
+    assert_eq!(first.connector.journal().unwrap().records.len(), 2);
+    assert_eq!(first.tokens.lock().unwrap().len(), 2);
+    let mut second = fixture().await;
+    second.connector.path = first.dir.path().join("new-api.json");
+    mount_create(&second, 200, 1).await;
+    second
+        .connector
+        .prepare_import(request(&second.server.uri()))
+        .await
+        .unwrap();
+    assert_eq!(second.connector.journal().unwrap().records.len(), 3);
+    assert_eq!(second.tokens.lock().unwrap().len(), 1);
 }
 
 /// A server-side insert followed by an HTTP failure must be recovered without a second POST.
@@ -386,13 +578,73 @@ async fn resumes_pending_creation_after_server_becomes_visible() {
     let _ = f.connector.prepare_import(request(&f.server.uri())).await;
     let journal = f.connector.journal().unwrap();
     let r = &journal.records[0];
-    f.tokens.lock().unwrap().push(json!({"id":1,"user_id":77,"name":r.name,"status":1,"group":"staff","model_limits_enabled":true,"model_limits":"model-one","expired_time":-1,"unlimited_quota":true}));
+    f.tokens.lock().unwrap().push(json!({"id":1,"user_id":77,"name":r.name,"status":1,"group":"staff","expired_time":-1,"unlimited_quota":true}));
     let result = f
         .connector
         .prepare_import(request(&f.server.uri()))
         .await
         .unwrap();
     assert!(result.reused);
+}
+
+/// Reconciliation must stop if two new keys have the same name and identical model restrictions.
+#[tokio::test]
+async fn uncertain_same_name_creation_rejects_multiple_new_candidates() {
+    let mut f = fixture().await;
+    Mock::given(method("POST"))
+        .and(path("/api/token/"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(1)
+        .mount(&f.server)
+        .await;
+    let _ = f.connector.prepare_import(request(&f.server.uri())).await;
+    let record = &f.connector.journal().unwrap().records[0];
+    for id in [1, 2] {
+        f.tokens.lock().unwrap().push(json!({"id":id,"user_id":77,"name":record.name,"status":1,"group":"staff","expired_time":-1,"unlimited_quota":true}));
+    }
+    assert_eq!(
+        f.connector
+            .prepare_import(request(&f.server.uri()))
+            .await
+            .err()
+            .unwrap()
+            .code,
+        "ambiguous_token"
+    );
+}
+
+/// A journal from the UUID naming version can still recover a pending token without creating a replacement.
+#[tokio::test]
+async fn legacy_name_journal_without_snapshot_still_recovers() {
+    let mut f = fixture().await;
+    Mock::given(method("POST"))
+        .and(path("/api/token/"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(1)
+        .mount(&f.server)
+        .await;
+    let _ = f.connector.prepare_import(request(&f.server.uri())).await;
+    let name = "power-switch-00000000-0000-4000-8000-000000000001";
+    let mut journal = serde_json::to_value(f.connector.journal().unwrap()).unwrap();
+    journal["records"][0]["name"] = json!(name);
+    journal["records"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("prior_token_ids");
+    std::fs::write(
+        f.dir.path().join("new-api.json"),
+        serde_json::to_vec(&journal).unwrap(),
+    )
+    .unwrap();
+    f.tokens.lock().unwrap().push(json!({"id":1,"user_id":77,"name":name,"status":1,"group":"staff","expired_time":-1,"unlimited_quota":true}));
+    assert!(
+        f.connector
+            .prepare_import(request(&f.server.uri()))
+            .await
+            .unwrap()
+            .reused
+    );
+    assert_eq!(f.tokens.lock().unwrap().len(), 1);
 }
 
 /// Changed remote restrictions require explicit replacement; callers cannot silently broaden access.
@@ -404,6 +656,7 @@ async fn rejects_modified_or_disabled_tokens_and_ambiguous_names() {
         .prepare_import(request(&f.server.uri()))
         .await
         .unwrap();
+    f.tokens.lock().unwrap()[0]["model_limits_enabled"] = json!(true);
     f.tokens.lock().unwrap()[0]["model_limits"] = json!("model-one,another-model");
     assert_eq!(
         f.connector
@@ -414,7 +667,7 @@ async fn rejects_modified_or_disabled_tokens_and_ambiguous_names() {
             .code,
         "token_invalid"
     );
-    f.tokens.lock().unwrap()[0]["model_limits"] = json!("model-one");
+    f.tokens.lock().unwrap()[0]["model_limits_enabled"] = json!(false);
     f.tokens.lock().unwrap()[0]["status"] = json!(2);
     assert_eq!(
         f.connector

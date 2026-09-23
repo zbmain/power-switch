@@ -94,13 +94,16 @@ describe("New API connector", () => {
     expect(screen.getByRole("textbox", { name: "平台名称" })).toHaveValue(
       "winwin",
     );
+    expect(
+      screen.queryByRole("combobox", { name: "分组" }),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "创建并添加" }));
     await screen.findByText("模型已保存，实际调用尚未验证。");
     expect(newApi.importModel).toHaveBeenCalledWith(
       expect.objectContaining({
         baseUrl,
         userId: 77,
-        group: "staff",
+        group: "default",
         modelId: "auto",
         name: "winwin · auto",
         protocol: "openai-chat",
@@ -108,6 +111,7 @@ describe("New API connector", () => {
         restartUncertain: false,
       }),
     );
+    expect(newApi.catalog).toHaveBeenCalledWith(baseUrl, 77, "default");
     expect(onAdded).toHaveBeenCalledTimes(1);
     expect(
       screen.getByRole("heading", { name: "winwin · auto" }),
@@ -147,7 +151,7 @@ describe("New API connector", () => {
       "chat-model",
     );
     expect(platform).toHaveValue(" 自建平台 ");
-    await user.selectOptions(screen.getByLabelText("目标客户端"), "codex");
+    await user.selectOptions(screen.getByLabelText("目前客户端"), "codex");
     expect(
       await screen.findByRole("option", { name: "responses-model" }),
     ).toBeInTheDocument();

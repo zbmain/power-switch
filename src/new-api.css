@@ -1,3 +1,14 @@
+.modal.new-api-modal {
+  padding: 30px 34px;
+  max-height: calc(100dvh - 32px);
+  width: min(760px, calc(100vw - 32px));
+}
+.new-api-modal .modal-heading {
+  margin-bottom: 26px;
+}
+.new-api-modal .modal-heading p {
+  margin-top: 4px;
+}
 .new-api-dialog {
   display: grid;
   gap: 20px;
@@ -5,7 +16,74 @@
 .new-api-section,
 .new-api-form {
   display: grid;
+  gap: 20px;
+}
+.new-api-section {
+  gap: 10px;
+}
+.new-api-form {
+  grid-template-columns: minmax(0, 1fr);
+}
+.new-api-step-heading {
+  display: flex;
+  align-items: flex-start;
   gap: 14px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+.new-api-dialog > .new-api-step-heading:first-of-type {
+  padding-top: 0;
+  border-top: 0;
+}
+.new-api-step-number {
+  color: var(--orange);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  padding-top: 2px;
+}
+.new-api-step-heading strong {
+  font-size: 15px;
+}
+.new-api-step-heading p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 4px 0 0;
+}
+.new-api-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+.new-api-fields > .field:first-child {
+  grid-column: 1 / -1;
+}
+.new-api-fields .field {
+  align-self: start;
+}
+.new-api-fields .field-hint {
+  line-height: 1.5;
+}
+.new-api-dialog .field {
+  font-size: 12px;
+  font-weight: 600;
+}
+.new-api-dialog .field {
+  min-width: 0;
+  gap: 8px;
+  margin-bottom: 0;
+}
+.new-api-dialog .field input,
+.new-api-dialog .field select {
+  padding: 11px 12px;
+}
+.new-api-dialog .form-grid {
+  gap: 16px;
+}
+.new-api-dialog .warning-note {
+  margin: 0;
+  padding: 8px 10px;
 }
 .new-api-inline {
   display: flex;
@@ -22,8 +100,8 @@
 .new-api-account {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 16px;
+  gap: 10px;
+  padding: 16px 18px;
   border: 1px solid var(--border);
   border-radius: 12px;
 }
@@ -32,9 +110,9 @@
 }
 .new-api-account p,
 .new-api-policy p {
-  font-size: 12px;
-  line-height: 1.7;
-  margin: 5px 0 0;
+  font-size: 11px;
+  line-height: 1.6;
+  margin: 3px 0 0;
   color: var(--muted);
 }
 .new-api-account strong,
@@ -43,8 +121,8 @@
 }
 .new-api-policy {
   display: flex;
-  gap: 12px;
-  padding: 14px 16px;
+  gap: 10px;
+  padding: 16px 18px;
   background: var(--surface-alt, rgba(128, 128, 128, 0.06));
   border-radius: 10px;
 }
@@ -52,11 +130,57 @@
   flex-shrink: 0;
   margin-top: 2px;
 }
+.new-api-policy > div {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 12px;
+}
 .new-api-policy code {
   display: block;
   font-size: 12px;
-  margin-top: 9px;
+  margin-top: 0;
+  grid-column: 2;
+  grid-row: 1;
+  max-width: 340px;
   overflow-wrap: anywhere;
+}
+.new-api-dialog .advanced {
+  margin-top: 0;
+}
+.new-api-dialog .advanced > summary {
+  padding: 9px 12px;
+}
+.new-api-dialog .advanced-body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 20px;
+  padding: 18px;
+}
+.new-api-dialog .advanced:not([open]) .advanced-body {
+  display: none;
+}
+.new-api-dialog .advanced-body > .field-hint,
+.new-api-dialog .effort-options {
+  grid-column: 1 / -1;
+}
+.new-api-dialog .advanced-body .field {
+  margin: 0;
+}
+.new-api-dialog .field > .optional {
+  left: auto;
+  right: 0;
+}
+.new-api-dialog .capabilities {
+  margin: 0;
+  align-items: center;
+  gap: 18px;
+  padding-top: 18px;
+}
+.new-api-dialog .effort-options legend {
+  margin-bottom: 4px;
 }
 .new-api-progress,
 .new-api-test {
@@ -69,7 +193,7 @@
 }
 .new-api-success {
   display: grid;
-  gap: 16px;
+  gap: 12px;
 }
 .new-api-success-title {
   display: flex;
@@ -95,7 +219,9 @@
   margin: 0;
 }
 .new-api-dialog .modal-footer {
-  margin-top: 8px;
+  margin-top: 0;
+  padding-top: 20px;
+  justify-content: space-between;
 }
 .new-api-dialog .secret-input input {
   padding-right: 82px;
@@ -104,6 +230,32 @@
   right: 40px;
 }
 @media (max-width: 650px) {
+  .modal.new-api-modal {
+    padding: 22px 18px;
+  }
+  .new-api-section,
+  .new-api-form,
+  .new-api-fields,
+  .new-api-dialog .advanced-body,
+  .new-api-dialog .form-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+  .new-api-fields > .field:first-child {
+    grid-column: auto;
+  }
+  .new-api-policy > div {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .new-api-policy code {
+    grid-column: 1;
+    grid-row: 3;
+    margin-top: 5px;
+    max-width: none;
+  }
+  .new-api-dialog .capabilities {
+    padding-top: 0;
+  }
   .new-api-inline,
   .new-api-account,
   .new-api-test {
