@@ -13,6 +13,38 @@ export interface ModelConfig {
   contextWindow: number | null;
   reasoningLevels: string[];
 }
+export interface ModelTestResult {
+  message: string;
+  elapsedMs: number;
+}
+export interface ModelTestState {
+  key: string;
+  status: "testing" | "passed" | "failed";
+  message: string;
+  expiresAt?: number;
+  dismissed?: boolean;
+}
+
+/** Show the same concise success copy everywhere, converting milliseconds to seconds. */
+export function modelTestSuccess(result: ModelTestResult): string {
+  return "测试通过，耗时" + (result.elapsedMs / 1000).toFixed(2) + " 秒";
+}
+
+/** Bind transient results to every draft field; never persist or display this credential-bearing key. */
+export function modelTestKey(model: ModelConfig): string {
+  return JSON.stringify([
+    model.id,
+    model.name,
+    model.protocol,
+    model.baseUrl,
+    model.modelId,
+    model.apiKey,
+    model.supportsToolCall,
+    model.supportsImages,
+    model.contextWindow,
+    model.reasoningLevels,
+  ]);
+}
 export interface Settings {
   theme: "system" | "light" | "dark";
   workbuddyPath: string | null;
@@ -54,6 +86,7 @@ export interface ApplyResult {
   backupId: string;
   paths: string[];
   message: string;
+  workbuddySelection?: string | null;
 }
 export interface ImportRow {
   index: number;

@@ -9,6 +9,7 @@ use crate::{
     model::{ModelConfig, Protocol},
 };
 use http::{read_json, ApiClient};
+use pinyin::ToPinyin;
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -178,6 +179,8 @@ enum CreationPhase {
 
 #[derive(Clone, Deserialize, Serialize)]
 struct LocalModel {
+    #[serde(default)]
+    model_id: String,
     protocol: Protocol,
     id: String,
 }
@@ -188,8 +191,12 @@ struct TokenRecord {
     user_id: i64,
     group: String,
     model_id: String,
+    #[serde(default)]
+    unrestricted: bool,
     name: String,
     token_id: Option<i64>,
+    #[serde(default)]
+    prior_token_ids: Option<Vec<i64>>,
     phase: CreationPhase,
     models: Vec<LocalModel>,
 }
@@ -647,7 +654,7 @@ impl NewApi {
         let snapshot = files::Snapshot::read(&self.path).map_err(storage)?;
         let Some(bytes) = snapshot.bytes else {
             return Ok(Journal {
-                version: 1,
+                version: 2,
                 records: vec![],
             });
         };
@@ -657,10 +664,13 @@ impl NewApi {
                 "New API 恢复记录已损坏；请恢复记录后重试，未创建新密钥",
             )
         })?;
-        if journal.version != 1 {
+        if journal.version != 1 && journal.version != 2 {
             return Err(Error::new("storage", "New API 恢复记录版本不兼容"));
         }
-        Ok(journal)
+        Ok(Journal {
+            version: 2,
+            ..journal
+        })
     }
 
     /// Commit a private journal before any non-idempotent remote operation.
@@ -673,12 +683,6 @@ impl NewApi {
     /// Create or recover one owned token, returning a stable model ID for an idempotent library save.
     pub async fn prepare_import(&mut self, request: ImportRequest) -> Result<PreparedImport> {
         let base = instance_url(&request.base_url)?;
-        if request.model_id.contains(',') {
-            return Err(Error::new(
-                "model",
-                "该模型 ID 含逗号，无法设置精确的 New API 模型限制",
-            ));
-        }
         let mut model = ModelConfig {
             id: String::new(),
             name: request.name,
@@ -710,26 +714,38 @@ impl NewApi {
             ));
         }
         let api = self.authenticated(&base, request.user_id).await?;
+        let desired_name = token_name(&self.session.as_ref().unwrap().user);
         let mut journal = self.journal()?;
         let index = journal
             .records
             .iter()
-            .position(|r| {
-                r.base_url == base
-                    && r.user_id == request.user_id
-                    && r.group == request.group
-                    && r.model_id == model.model_id
-            })
+            .position(|r| r.base_url == base && r.user_id == request.user_id && r.unrestricted)
             .unwrap_or_else(|| {
+                let models = journal
+                    .records
+                    .iter()
+                    .filter(|r| {
+                        r.base_url == base && r.user_id == request.user_id && !r.unrestricted
+                    })
+                    .flat_map(|r| {
+                        r.models.iter().map(|m| LocalModel {
+                            model_id: r.model_id.clone(),
+                            protocol: m.protocol,
+                            id: m.id.clone(),
+                        })
+                    })
+                    .collect();
                 journal.records.push(TokenRecord {
                     base_url: base.clone(),
                     user_id: request.user_id,
                     group: request.group.clone(),
-                    model_id: model.model_id.clone(),
-                    name: token_name(),
+                    model_id: String::new(),
+                    unrestricted: true,
+                    name: desired_name.clone(),
                     token_id: None,
+                    prior_token_ids: None,
                     phase: CreationPhase::Prepared,
-                    models: vec![],
+                    models,
                 });
                 journal.records.len() - 1
             });
@@ -744,8 +760,9 @@ impl NewApi {
                 if !request.replace_invalid {
                     return Err(Error::new("token_invalid", "关联密钥已失效、被删除或限制被修改；确认后可创建新密钥，旧密钥不会被自动删除"));
                 }
-                record.name = token_name();
+                record.name = desired_name.clone();
                 record.token_id = None;
+                record.prior_token_ids = None;
                 record.phase = CreationPhase::Prepared;
                 reused = false;
             }
@@ -763,7 +780,8 @@ impl NewApi {
                     ))
                 }
                 None if request.restart_uncertain => {
-                    record.name = token_name();
+                    record.name = desired_name;
+                    record.prior_token_ids = None;
                     record.phase = CreationPhase::Prepared;
                     reused = false;
                 }
@@ -771,15 +789,28 @@ impl NewApi {
             }
         }
         if record.phase == CreationPhase::Prepared {
+            // Names are human-readable and may repeat; persist existing IDs to distinguish this creation.
+            record.prior_token_ids = Some(
+                self.search_named_tokens(&api, &record)
+                    .await?
+                    .iter()
+                    .filter_map(|token| token["id"].as_i64())
+                    .collect(),
+            );
             // Save 'submitted' first: a crash or lost response must never cause an automatic second POST.
             record.phase = CreationPhase::Submitted;
             journal.records[index] = record.clone();
             self.save_journal(&journal)?;
-            let result = api.api(api.management(Method::POST, "/api/token/", Some(record.user_id)).json(&json!({
-                "name": record.name, "expired_time": -1, "unlimited_quota": true,
-                "remain_quota": 0, "model_limits_enabled": true, "model_limits": record.model_id,
-                "group": record.group, "allow_ips": "", "cross_group_retry": false
-            }))).await;
+            let result = api
+                .api(
+                    api.management(Method::POST, "/api/token/", Some(record.user_id))
+                        .json(&json!({
+                            "name": record.name, "expired_time": -1, "unlimited_quota": true,
+                            "remain_quota": 0,
+                            "group": record.group, "allow_ips": "", "cross_group_retry": false
+                        })),
+                )
+                .await;
             if let Err(error) = result {
                 // Even a successful HTTP response may be lost after the database insert; reconcile first.
                 if matches!(
@@ -819,11 +850,12 @@ impl NewApi {
         let binding = record
             .models
             .iter()
-            .find(|m| m.protocol == model.protocol)
+            .find(|m| m.protocol == model.protocol && m.model_id == model.model_id)
             .map(|m| m.id.clone())
             .unwrap_or_else(|| {
                 let id = Uuid::new_v4().to_string();
                 record.models.push(LocalModel {
+                    model_id: model.model_id.clone(),
                     protocol: model.protocol,
                     id: id.clone(),
                 });
@@ -841,8 +873,41 @@ impl NewApi {
         })
     }
 
-    /// Search all bounded result pages and accept a single exact, owned token name only.
+    /// Match a known ID or reconcile only new, policy-matching IDs after a named creation attempt.
     async fn find_token(&self, api: &ApiClient, record: &TokenRecord) -> Result<Option<Value>> {
+        let matches: Vec<_> = self
+            .search_named_tokens(api, record)
+            .await?
+            .into_iter()
+            .filter(|token| {
+                if let Some(id) = record.token_id {
+                    return token["id"].as_i64() == Some(id);
+                }
+                match &record.prior_token_ids {
+                    Some(prior) => {
+                        token["id"].as_i64().is_some_and(|id| !prior.contains(&id))
+                            && token_matches(token, record)
+                    }
+                    // Legacy UUID-named journal entries still recover with their original exact name.
+                    None => true,
+                }
+            })
+            .collect();
+        if matches.len() > 1 {
+            return Err(Error::new(
+                "ambiguous_token",
+                "存在多把符合本次创建条件的令牌，无法确认归属；请在 New API 中检查",
+            ));
+        }
+        Ok(matches.into_iter().next())
+    }
+
+    /// Read all exact-name matches; identical display names across models must not imply identical keys.
+    async fn search_named_tokens(
+        &self,
+        api: &ApiClient,
+        record: &TokenRecord,
+    ) -> Result<Vec<Value>> {
         let mut matches = Vec::new();
         for page in 1..=100 {
             let response = api
@@ -862,29 +927,16 @@ impl NewApi {
                 .iter()
                 .filter(|t| t["name"].as_str() == Some(&record.name))
             {
+                if token["id"].as_i64().is_none_or(|id| id <= 0) {
+                    return Err(Error::new("response", "令牌搜索返回了无效 ID，已停止创建"));
+                }
                 matches.push(token.clone());
-            }
-            if matches.len() > 1 {
-                return Err(Error::new(
-                    "ambiguous_token",
-                    "存在同名令牌，无法安全确认归属；请在 New API 中检查",
-                ));
             }
             let total = response["data"]["total"]
                 .as_u64()
                 .ok_or_else(|| Error::new("response", "令牌搜索缺少分页总数，已停止创建"))?;
             if page * 100 >= total || items.is_empty() {
-                if let Some(token) = matches.first() {
-                    if let Some(id) = record.token_id {
-                        if token["id"].as_i64() != Some(id) {
-                            return Err(Error::new(
-                                "token_invalid",
-                                "关联令牌的 ID 已改变，请检查 New API 令牌列表",
-                            ));
-                        }
-                    }
-                }
-                return Ok(matches.pop());
+                return Ok(matches);
             }
         }
         Err(Error::new("response", "令牌搜索结果过多，已停止自动处理"))
@@ -897,11 +949,12 @@ impl NewApi {
             .records
             .iter()
             .find(|r| {
-                r.model_id == model.model_id
-                    && r.models
-                        .iter()
-                        .any(|m| m.id == model.id && m.protocol == model.protocol)
-                    && api_base(&r.base_url, model.protocol) == model.base_url
+                r.models.iter().any(|m| {
+                    m.id == model.id
+                        && m.protocol == model.protocol
+                        && (m.model_id == model.model_id
+                            || (!r.unrestricted && r.model_id == model.model_id))
+                }) && api_base(&r.base_url, model.protocol) == model.base_url
             })
             .ok_or_else(|| {
                 Error::new(
@@ -1024,14 +1077,19 @@ async fn verify(session: &mut Session) -> Result<()> {
     Ok(())
 }
 
-/// Check exact limits and ownership before reusing a token that may have been edited remotely.
+/// Check ownership and security settings before reusing a shared or legacy token.
 fn token_matches(token: &Value, record: &TokenRecord) -> bool {
     token["id"].as_i64().is_some_and(|id| id > 0)
         && token["user_id"].as_i64() == Some(record.user_id)
         && token["name"].as_str() == Some(&record.name)
         && token["group"].as_str() == Some(&record.group)
-        && token["model_limits_enabled"].as_bool() == Some(true)
-        && token["model_limits"].as_str() == Some(&record.model_id)
+        && if record.unrestricted {
+            token["model_limits_enabled"].as_bool() == Some(false)
+                || token.get("model_limits_enabled").is_none()
+        } else {
+            token["model_limits_enabled"].as_bool() == Some(true)
+                && token["model_limits"].as_str() == Some(&record.model_id)
+        }
         && token["unlimited_quota"].as_bool() == Some(true)
         && token["expired_time"].as_i64() == Some(-1)
         && token["allow_ips"].as_str().unwrap_or_default().is_empty()
@@ -1072,8 +1130,8 @@ async fn check_key(base: &str, model: &ModelConfig) -> Result<()> {
             .any(|r| r["id"].as_str() == Some(&model.model_id))
     }) {
         return Err(Error::new(
-            "token_unusable",
-            "新密钥无法访问所选模型，请检查余额、分组和模型配置；已有密钥会在重试时复用",
+            "group_access",
+            "共享密钥的创建分组无法访问所选模型；请在 New API 调整该密钥的分组权限后重试，应用不会另建密钥",
         ));
     }
     Ok(())
@@ -1131,9 +1189,28 @@ async fn test_inference(base: &str, model: &ModelConfig) -> Result<String> {
     Ok("调用已验证：收到所选协议的模型响应。本次测试不验证上下文窗口、工具调用或图像能力。".into())
 }
 
-/// Generate a recovery-friendly exact name within New API's 50-byte limit.
-fn token_name() -> String {
-    format!("power-switch-{}", Uuid::new_v4())
+/// Use the verified OAuth display name's lowercase pinyin with a stable suffix, within the 50-byte limit.
+fn token_name(user: &User) -> String {
+    for name in [&user.display_name, &user.username] {
+        let mut spelling = String::new();
+        for character in name.trim().chars() {
+            if let Some(pinyin) = character.to_pinyin() {
+                spelling.extend(pinyin.plain().chars().filter_map(|letter| match letter {
+                    'ü' => Some('v'),
+                    'ê' => Some('e'),
+                    c if c.is_ascii_alphanumeric() => Some(c),
+                    _ => None,
+                }));
+            } else if character.is_ascii_alphanumeric() {
+                spelling.push(character.to_ascii_lowercase());
+            }
+        }
+        if !spelling.is_empty() {
+            spelling.truncate(spelling.len().min(47));
+            return format!("{spelling}-ps");
+        }
+    }
+    format!("user{}-ps", user.id)
 }
 /// Read wall-clock time for cookie retention, login expiry and remote token metadata.
 fn now() -> u64 {

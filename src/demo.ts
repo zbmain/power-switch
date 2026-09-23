@@ -44,6 +44,16 @@ export async function demoCall(
   command: string,
   args: Record<string, unknown> = {},
 ): Promise<unknown> {
+  if (command === "list_models") {
+    const connection = args.connection as ModelConfig;
+    return connection.protocol === "anthropic-messages"
+      ? ["my-creative-model", "claude-demo", "claude-demo-thinking"]
+      : connection.protocol === "openai-responses"
+        ? ["my-coding-model", "responses-demo", "responses-demo-mini"]
+        : ["my-chat-model", "chat-demo", "chat-demo-mini"];
+  }
+  if (command === "test_model")
+    throw new Error("浏览器演示无法进行真实模型测试，请在桌面应用中测试。");
   if (command === "get_data")
     return structuredClone({
       models,

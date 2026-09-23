@@ -18,7 +18,9 @@
   --blue-soft: #e7f1f4;
   --orange: #e59057;
   --orange-soft: #f9ebdc;
-  --green: #587e64;
+  --green: #15803d;
+  --test-green: #16a34a;
+  --red: #b9514d;
   --green-soft: #edf3ed;
   --input: #ffffff;
   --shadow: 0 6px 24px #3a393507;
@@ -35,7 +37,9 @@
   --blue-soft: #2b424c;
   --orange: #edaa79;
   --orange-soft: #493a30;
-  --green: #a3c5ae;
+  --green: #4ade80;
+  --test-green: #22c55e;
+  --red: #ef9d97;
   --green-soft: #293c32;
   --input: #1f272b;
   --shadow: 0 6px 24px #00000018;
@@ -135,11 +139,27 @@ button:active:not(:disabled) {
   display: flex;
   flex-direction: column;
 }
+.topbar-guide {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--orange);
+  background: var(--surface);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.topbar-guide:hover {
+  background: var(--orange-soft);
+}
 .brand {
   display: flex;
   align-items: center;
   gap: 9px;
-  margin: 0 2px 44px;
+  margin: 0 2px 34px;
 }
 .brand img {
   width: 44px;
@@ -163,23 +183,6 @@ button:active:not(:disabled) {
   color: var(--muted);
   margin: 3px 0 0 1px;
   font-weight: 600;
-}
-.workspace-label {
-  font-size: 10px;
-  letter-spacing: 0.7px;
-  color: var(--muted);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 12px;
-  margin-bottom: 16px;
-}
-.workspace-label span {
-  font-size: 8px;
-  letter-spacing: 1px;
-  border: 1px solid var(--border);
-  padding: 3px 5px;
-  border-radius: 3px;
 }
 nav {
   display: grid;
@@ -289,11 +292,15 @@ nav {
   justify-content: space-between;
 }
 .topbar > span:first-child {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.topbar-actions {
   display: flex;
   align-items: center;
-  gap: 9px;
-  font-size: 11px;
-  color: var(--muted);
+  justify-content: flex-end;
+  gap: 14px;
 }
 .environment {
   display: flex;
@@ -374,6 +381,22 @@ h1 {
 }
 .button.secondary:hover {
   border-color: var(--muted);
+}
+.button.new-api-action,
+.button.guide-start {
+  background: #d87335;
+  color: white;
+  border-color: #d87335;
+}
+.button.new-api-action:hover,
+.button.guide-start:hover {
+  background: #bb5e27;
+}
+:root[data-theme="dark"] .button.new-api-action,
+:root[data-theme="dark"] .button.guide-start {
+  background: #df8850;
+  color: #1c2225;
+  border-color: #df8850;
 }
 .button.danger {
   background: #af4e42;
@@ -554,6 +577,50 @@ h1 {
   font-size: 14px;
   font-weight: 600;
   line-height: 1.5;
+}
+.model-test-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-left: 8px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+.model-test-dot.passed {
+  color: var(--test-green);
+}
+.model-test-feedback.passed {
+  color: var(--green);
+}
+.model-test-dot.failed,
+.model-test-feedback.failed {
+  color: var(--red);
+}
+.model-test-feedback {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  margin: 14px 0 0;
+}
+.model-test-feedback > span {
+  flex: 1;
+  min-width: 0;
+}
+.model-test-feedback > .icon-button {
+  flex-shrink: 0;
+  color: inherit;
+  width: 24px;
+  height: 24px;
+}
+.card-test-feedback {
+  border-top: 1px solid var(--border);
+  padding: 10px 24px;
+  margin: 0;
 }
 .model-id {
   font-family: "SFMono-Regular", Consolas, monospace;
@@ -1031,6 +1098,29 @@ textarea::placeholder {
 .agent-option .tag {
   margin-left: auto;
 }
+.workbuddy-select-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 2px 16px;
+  padding: 10px 12px;
+  border-left: 2px solid var(--blue);
+  cursor: pointer;
+}
+.workbuddy-select-option:has(input:disabled) {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.workbuddy-select-option strong {
+  display: block;
+  font-size: 12px;
+}
+.workbuddy-select-option small {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  margin-top: 5px;
+}
 .info-note {
   display: flex;
   gap: 10px;
@@ -1433,7 +1523,6 @@ textarea {
     padding: 28px 12px 20px;
   }
   .brand > span,
-  .workspace-label,
   .privacy-box,
   .version,
   .nav-count {
@@ -1504,12 +1593,12 @@ textarea {
   .topbar {
     padding: 0 15px;
   }
-  .topbar > span:first-child {
-    display: none;
-  }
   .topbar {
-    justify-content: flex-end;
+    justify-content: space-between;
     height: 49px;
+  }
+  .environment.demo {
+    display: none;
   }
   .page-header h1 {
     font-size: 25px;
@@ -1603,4 +1692,12 @@ textarea {
     animation: none !important;
     transition: none !important;
   }
+}
+
+.catalog-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: -6px 0 18px;
 }

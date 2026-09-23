@@ -10,12 +10,12 @@ import {
   ArrowRight,
   Check,
   CheckCircle2,
-  ChevronRight,
   CircleHelp,
   Copy,
   Download,
   ExternalLink,
   FileClock,
+  FlaskConical,
   FolderCog,
   FolderOpen,
   BookOpen,
@@ -39,11 +39,13 @@ import { api, isDesktop } from "./api";
 import { pickLocalPath } from "./file-picker";
 import { SkillsPage } from "./SkillsPage";
 import { NewApiDialog } from "./NewApiDialog";
+import { NewcomerGuide } from "./NewcomerGuide";
 import {
   AgentPicker,
   ApplyReview,
   Modal,
   ModelForm,
+  ModelTestFeedback,
   ProtocolMark,
 } from "./components";
 import {
@@ -51,17 +53,21 @@ import {
   formatTime,
   nativeAgent,
   newModel,
+  modelTestKey,
+  modelTestSuccess,
   protocolLabels,
   type AppData,
   type ApplyPreview,
   type BackupRecord,
   type ImportPreview,
   type ModelConfig,
+  type ModelTestState,
   type Settings,
 } from "./types";
 
 type Page = "models" | "backups" | "settings" | "skills";
 type ModalState =
+  | { kind: "guide" }
   | { kind: "new-api" }
   | { kind: "model"; model: ModelConfig }
   | { kind: "agents"; model: ModelConfig }
@@ -87,6 +93,10 @@ export default function App() {
   const [modal, setModal] = useState<ModalState>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
+  const [modelTests, setModelTests] = useState<Record<string, ModelTestState>>(
+    {},
+  );
+  const pendingTests = useRef(new Map<string, symbol>());
   const [links, setLinks] = useState<string[]>([]);
   const seenLinks = useRef(new Map<string, number>());
   /** Reload authoritative native state following a successful mutation. */
@@ -187,6 +197,56 @@ export default function App() {
     await refresh();
     setNotice({ kind: "success", text });
   }
+  /** Test one saved model on demand; bind its transient indicator to the exact saved configuration. */
+  async function testLibraryModel(model: ModelConfig) {
+    if (pendingTests.current.has(model.id)) return;
+    const request = Symbol();
+    pendingTests.current.set(model.id, request);
+    const key = modelTestKey(model);
+    setModelTests((old) => ({
+      ...old,
+      [model.id]: {
+        key,
+        status: "testing",
+        message: "正在发送 test，最长等待 30 秒…",
+      },
+    }));
+    try {
+      const result = await api.testModel(structuredClone(model));
+      if (pendingTests.current.get(model.id) !== request) return;
+      setModelTests((old) =>
+        old[model.id]?.key === key && old[model.id]?.status === "testing"
+          ? {
+              ...old,
+              [model.id]: {
+                key,
+                status: "passed",
+                message: modelTestSuccess(result),
+                expiresAt: Date.now() + 5000,
+              },
+            }
+          : old,
+      );
+    } catch (error) {
+      if (pendingTests.current.get(model.id) !== request) return;
+      setModelTests((old) =>
+        old[model.id]?.key === key && old[model.id]?.status === "testing"
+          ? {
+              ...old,
+              [model.id]: {
+                key,
+                status: "failed",
+                message: String(error),
+                expiresAt: Date.now() + 5000,
+              },
+            }
+          : old,
+      );
+    } finally {
+      if (pendingTests.current.get(model.id) === request)
+        pendingTests.current.delete(model.id);
+    }
+  }
   const visible = (data?.models ?? []).filter(
     (m) =>
       (filter === "all" || nativeAgent[m.protocol] === filter) &&
@@ -196,7 +256,7 @@ export default function App() {
   );
   const titles = {
     models: ["模型库", "把合适的模型，交给合适的 Agent。"],
-    backups: ["模型配置记录", "每一次切换，都留有回去的路。"],
+    backups: ["模型配置备份", "每一次切换，都留有回去的路。"],
     settings: ["设置", "让配置找到正确的位置。"],
     skills: ["技能", "全局安装，为每个 Agent 连接合适的技能。"],
   };
@@ -218,9 +278,6 @@ export default function App() {
             <small>YOUR MODELS. YOUR CHOICE.</small>
           </span>
         </a>
-        <div className="workspace-label">
-          个人工作空间 <span>LOCAL</span>
-        </div>
         <nav aria-label="主导航">
           <button
             className={page === "models" ? "nav-item active" : "nav-item"}
@@ -234,7 +291,7 @@ export default function App() {
             onClick={() => setPage("backups")}
           >
             <FileClock size={19} />
-            模型配置记录
+            模型配置备份
           </button>
           <button className="nav-item" disabled title="待开放">
             <BookOpen size={19} />
@@ -262,32 +319,32 @@ export default function App() {
           </div>
           <div className="version">
             <span className="status-dot" />
-            power-switch <span>v0.1.0</span>
+            power-switch <span>v0.1.1</span>
           </div>
         </div>
       </aside>
       <main className="main">
         <div className="topbar">
-          <span>
-            工作空间 <ChevronRight size={13} /> {titles[page][0]}
-          </span>
-          <span className={`environment ${!isDesktop ? "demo" : ""}`}>
-            <span className="status-dot" />
-            {isDesktop ? "本地桌面应用" : "浏览器演示 · 不写入文件"}
-          </span>
+          <span>{titles[page][0]}</span>
+          <div className="topbar-actions">
+            {!isDesktop && (
+              <span className="environment demo">
+                <span className="status-dot" />
+                浏览器演示 · 不写入文件
+              </span>
+            )}
+            <button
+              className="topbar-guide"
+              type="button"
+              onClick={() => setModal({ kind: "guide" })}
+            >
+              <CircleHelp size={15} /> 新手指引
+            </button>
+          </div>
         </div>
         <div className="page-content">
           <header className="page-header">
             <div>
-              <div className="eyebrow">
-                {page === "models"
-                  ? "MODEL COLLECTION"
-                  : page === "backups"
-                    ? "CONFIGURATION HISTORY"
-                    : page === "skills"
-                      ? "SKILL LIBRARY"
-                      : "PREFERENCES"}
-              </div>
               <h1>
                 {titles[page][0]}
                 <span className="heading-dot">.</span>
@@ -299,17 +356,17 @@ export default function App() {
                 <button
                   className="button secondary"
                   disabled={busy}
-                  onClick={() => setModal({ kind: "new-api" })}
-                >
-                  <Download size={16} />从 New API 添加
-                </button>
-                <button
-                  className="button secondary"
-                  disabled={busy}
                   onClick={() => setModal({ kind: "import" })}
                 >
                   <Link2 size={16} />
                   导入链接
+                </button>
+                <button
+                  className="button new-api-action"
+                  disabled={busy}
+                  onClick={() => setModal({ kind: "new-api" })}
+                >
+                  <Download size={16} />从 New API 添加
                 </button>
                 <button
                   className="button primary"
@@ -421,131 +478,196 @@ export default function App() {
                   </div>
                   {visible.length ? (
                     <div className="model-list">
-                      {visible.map((model, index) => (
-                        <article
-                          className="model-card"
-                          key={model.id}
-                          style={{ animationDelay: `${index * 45}ms` }}
-                        >
-                          <div className="card-main">
-                            <ProtocolMark protocol={model.protocol} />
-                            <div className="model-title">
-                              <h2>{model.name}</h2>
-                              <span className="model-id">{model.modelId}</span>
-                            </div>
-                            <span
-                              className={`tag protocol-tag ${model.protocol}`}
-                            >
-                              {protocolLabels[model.protocol]}
-                            </span>
-                          </div>
-                          <div className="card-details">
-                            <div>
-                              <span className="detail-label">API 地址</span>
-                              <span className="endpoint" title={model.baseUrl}>
-                                {model.baseUrl}
-                                <ExternalLink size={12} />
-                              </span>
-                            </div>
-                            <div className="credential">
-                              <span className="detail-label">API KEY</span>
-                              <span
-                                className={!model.apiKey ? "missing-key" : ""}
-                              >
-                                {model.apiKey ? "••••••••••••" : "未设置"}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="detail-label">适用 AGENT</span>
-                              <span>
-                                {agentLabels[nativeAgent[model.protocol]]}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="card-footer">
-                            <div className="capability-tags">
-                              {model.supportsToolCall && <span>工具调用</span>}
-                              {model.supportsImages && <span>图像输入</span>}
-                              {model.contextWindow && (
-                                <span>
-                                  {Math.round(model.contextWindow / 1000)}K
-                                  上下文
+                      {visible.map((model, index) => {
+                        const probe =
+                          modelTests[model.id]?.key === modelTestKey(model)
+                            ? modelTests[model.id]
+                            : undefined;
+                        return (
+                          <article
+                            className="model-card"
+                            key={model.id}
+                            style={{ animationDelay: `${index * 45}ms` }}
+                          >
+                            <div className="card-main">
+                              <ProtocolMark
+                                protocol={model.protocol}
+                                name={model.name}
+                              />
+                              <div className="model-title">
+                                <h2>
+                                  {model.name}
+                                  {(probe?.status === "passed" ||
+                                    probe?.status === "failed") && (
+                                    <span
+                                      className={
+                                        "model-test-dot " + probe.status
+                                      }
+                                      role="img"
+                                      aria-label={
+                                        probe.status === "passed"
+                                          ? "模型测试通过"
+                                          : "模型测试未通过"
+                                      }
+                                      title={probe.message}
+                                    />
+                                  )}
+                                </h2>
+                                <span className="model-id">
+                                  {model.modelId}
                                 </span>
-                              )}
-                              {!!model.reasoningLevels.length && (
-                                <span>推理模型</span>
-                              )}
+                              </div>
+                              <span
+                                className={`tag protocol-tag ${model.protocol}`}
+                              >
+                                {protocolLabels[model.protocol]}
+                              </span>
                             </div>
-                            <div className="card-actions">
-                              <button
-                                className="icon-button"
-                                aria-label={`编辑 ${model.name}`}
-                                title="编辑"
-                                disabled={busy}
-                                onClick={() =>
-                                  setModal({
-                                    kind: "model",
-                                    model: structuredClone(model),
-                                  })
-                                }
-                              >
-                                <Pencil size={15} />
-                              </button>
-                              <button
-                                className="icon-button"
-                                aria-label={`复制 ${model.name}`}
-                                title="复制模型"
-                                disabled={busy}
-                                onClick={() =>
-                                  setModal({
-                                    kind: "model",
-                                    model: {
-                                      ...structuredClone(model),
-                                      id: "",
-                                      name: `${model.name} · 副本`,
-                                    },
-                                  })
-                                }
-                              >
-                                <Copy size={15} />
-                              </button>
-                              <button
-                                className="icon-button"
-                                aria-label={`分享 ${model.name}`}
-                                title="分享链接"
-                                disabled={busy}
-                                onClick={() =>
-                                  setModal({ kind: "share", model })
-                                }
-                              >
-                                <Link2 size={15} />
-                              </button>
-                              <button
-                                className="icon-button delete-button"
-                                aria-label={`删除 ${model.name}`}
-                                title="删除"
-                                disabled={busy}
-                                onClick={() =>
-                                  setModal({ kind: "delete", model })
-                                }
-                              >
-                                <Trash2 size={15} />
-                              </button>
-                              <span className="action-divider" />
-                              <button
-                                className="apply-button"
-                                disabled={busy}
-                                onClick={() =>
-                                  setModal({ kind: "agents", model })
-                                }
-                              >
-                                应用到 Agent
-                                <ArrowRight size={15} />
-                              </button>
+                            <div className="card-details">
+                              <div>
+                                <span className="detail-label">API 地址</span>
+                                <span
+                                  className="endpoint"
+                                  title={model.baseUrl}
+                                >
+                                  {model.baseUrl}
+                                  <ExternalLink size={12} />
+                                </span>
+                              </div>
+                              <div className="credential">
+                                <span className="detail-label">API KEY</span>
+                                <span
+                                  className={!model.apiKey ? "missing-key" : ""}
+                                >
+                                  {model.apiKey ? "••••••••••••" : "未设置"}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="detail-label">适用 AGENT</span>
+                                <span>
+                                  {agentLabels[nativeAgent[model.protocol]]}
+                                </span>
+                              </div>
                             </div>
-                          </div>
-                        </article>
-                      ))}
+                            <div className="card-footer">
+                              <div className="capability-tags">
+                                {model.supportsToolCall && (
+                                  <span>工具调用</span>
+                                )}
+                                {model.supportsImages && <span>图像输入</span>}
+                                {model.contextWindow && (
+                                  <span>
+                                    {Math.round(model.contextWindow / 1000)}K
+                                    上下文
+                                  </span>
+                                )}
+                                {!!model.reasoningLevels.length && (
+                                  <span>推理模型</span>
+                                )}
+                              </div>
+                              <div className="card-actions">
+                                <button
+                                  className="icon-button"
+                                  aria-label={`编辑 ${model.name}`}
+                                  title="编辑"
+                                  disabled={busy}
+                                  onClick={() =>
+                                    setModal({
+                                      kind: "model",
+                                      model: structuredClone(model),
+                                    })
+                                  }
+                                >
+                                  <Pencil size={15} />
+                                </button>
+                                <button
+                                  className="icon-button"
+                                  aria-label={`复制 ${model.name}`}
+                                  title="复制模型"
+                                  disabled={busy}
+                                  onClick={() =>
+                                    setModal({
+                                      kind: "model",
+                                      model: {
+                                        ...structuredClone(model),
+                                        id: "",
+                                        name: `${model.name} · 副本`,
+                                      },
+                                    })
+                                  }
+                                >
+                                  <Copy size={15} />
+                                </button>
+                                <button
+                                  className="icon-button"
+                                  aria-label={"测试模型 " + model.name}
+                                  title="测试模型"
+                                  disabled={busy || probe?.status === "testing"}
+                                  onClick={() => void testLibraryModel(model)}
+                                >
+                                  {probe?.status === "testing" ? (
+                                    <LoaderCircle size={15} className="spin" />
+                                  ) : (
+                                    <FlaskConical size={15} />
+                                  )}
+                                </button>
+                                <button
+                                  className="icon-button"
+                                  aria-label={`分享 ${model.name}`}
+                                  title="分享链接"
+                                  disabled={busy}
+                                  onClick={() =>
+                                    setModal({ kind: "share", model })
+                                  }
+                                >
+                                  <Link2 size={15} />
+                                </button>
+                                <button
+                                  className="icon-button delete-button"
+                                  aria-label={`删除 ${model.name}`}
+                                  title="删除"
+                                  disabled={busy}
+                                  onClick={() =>
+                                    setModal({ kind: "delete", model })
+                                  }
+                                >
+                                  <Trash2 size={15} />
+                                </button>
+                                <span className="action-divider" />
+                                <button
+                                  className="apply-button"
+                                  disabled={busy}
+                                  onClick={() =>
+                                    setModal({ kind: "agents", model })
+                                  }
+                                >
+                                  应用到 Agent
+                                  <ArrowRight size={15} />
+                                </button>
+                              </div>
+                            </div>
+                            {probe && (
+                              <ModelTestFeedback
+                                probe={probe}
+                                className="card-test-feedback"
+                                onDismiss={() =>
+                                  setModelTests((old) =>
+                                    old[model.id] === probe
+                                      ? {
+                                          ...old,
+                                          [model.id]: {
+                                            ...probe,
+                                            dismissed: true,
+                                          },
+                                        }
+                                      : old,
+                                  )
+                                }
+                              />
+                            )}
+                          </article>
+                        );
+                      })}
                     </div>
                   ) : (
                     <div className="empty-state">
@@ -658,7 +780,7 @@ export default function App() {
                       <div className="empty-icon">
                         <FileClock size={30} />
                       </div>
-                      <h2>还没有模型配置记录</h2>
+                      <h2>还没有模型配置备份</h2>
                       <p>第一次应用模型后，备份就会出现在这里。</p>
                     </div>
                   )}
@@ -689,6 +811,15 @@ export default function App() {
           </footer>
         </div>
       </main>
+      {modal?.kind === "guide" && (
+        <NewcomerGuide
+          onClose={closeModal}
+          onStart={() => {
+            setPage("models");
+            setModal({ kind: "new-api" });
+          }}
+        />
+      )}
       {modal?.kind === "new-api" && (
         <NewApiDialog onClose={closeModal} onAdded={refresh} />
       )}
@@ -703,9 +834,19 @@ export default function App() {
             initial={modal.model}
             busy={busy}
             onCancel={closeModal}
-            onSave={(model) =>
+            onSave={(model, result) =>
               void run(async () => {
-                await api.save(model);
+                const saved = await api.save(model);
+                pendingTests.current.delete(saved.id);
+                setModelTests((old) => ({
+                  ...old,
+                  [saved.id]: {
+                    key: modelTestKey(saved),
+                    status: "passed",
+                    message: modelTestSuccess(result),
+                    expiresAt: Date.now() + 5000,
+                  },
+                }));
                 await done(
                   isDesktop
                     ? "模型已保存，尚未应用到 Agent。"
@@ -726,11 +867,15 @@ export default function App() {
           <AgentPicker
             model={modal.model}
             busy={busy}
-            onPreview={(agents) =>
+            onPreview={(agents, selectWorkbuddyModel) =>
               void run(async () =>
                 setModal({
                   kind: "review",
-                  preview: await api.preview(modal.model.id, agents),
+                  preview: await api.preview(
+                    modal.model.id,
+                    agents,
+                    selectWorkbuddyModel,
+                  ),
                 }),
               )
             }
@@ -752,7 +897,11 @@ export default function App() {
             onConfirm={() =>
               void run(async () => {
                 const result = await api.apply(modal.preview.token);
-                await done(result.message);
+                await done(
+                  [result.message, result.workbuddySelection]
+                    .filter(Boolean)
+                    .join(" "),
+                );
               })
             }
           />
@@ -811,7 +960,7 @@ export default function App() {
       )}
       {modal?.kind === "delete-backup" && (
         <Modal
-          title="删除模型配置记录"
+          title="删除模型配置备份"
           description={`二次确认：删除“${modal.backup.title}”的备份？`}
           onClose={closeModal}
           busy={busy}
@@ -840,7 +989,7 @@ export default function App() {
               onClick={() =>
                 void run(async () => {
                   await api.deleteBackup(modal.backup.id);
-                  await done("模型配置记录已删除，Agent 配置保持不变。");
+                  await done("模型配置备份已删除，Agent 配置保持不变。");
                 })
               }
             >
@@ -858,7 +1007,7 @@ export default function App() {
         >
           <div className="info-note">
             <CircleHelp size={18} />
-            <span>已应用的 Agent 配置保留，可通过模型配置记录恢复。</span>
+            <span>已应用的 Agent 配置保留，可通过模型配置备份恢复。</span>
           </div>
           <div className="modal-footer">
             <button
@@ -947,7 +1096,7 @@ function ImportReview({
       <div className="import-rows">
         {preview.rows.map((row) => (
           <div className="import-row" key={row.index}>
-            <ProtocolMark protocol={row.protocol} small />
+            <ProtocolMark protocol={row.protocol} name={row.name} small />
             <div>
               <strong>{row.name}</strong>
               <p>{row.modelId}</p>
