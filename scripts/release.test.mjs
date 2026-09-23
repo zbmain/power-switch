@@ -207,6 +207,27 @@ test("stable releases cannot be overwritten and tags cannot switch commits", () 
       ),
     /stable release/,
   );
+  assert.doesNotThrow(() =>
+    assertPublishable(
+      {
+        draft: false,
+        prerelease: false,
+        assets: [],
+        target_commitish: "master",
+      },
+      "abc",
+      true,
+    ),
+  );
+  assert.throws(
+    () =>
+      assertPublishable(
+        { draft: false, prerelease: false, assets: [{ name: "existing.dmg" }] },
+        "abc",
+        true,
+      ),
+    /stable release/,
+  );
   assert.throws(
     () => assertPublishable({ draft: true, target_commitish: "other" }, "abc"),
     /different commit/,

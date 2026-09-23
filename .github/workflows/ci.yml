@@ -7,6 +7,11 @@ on:
     branches: [master]
   workflow_dispatch:
   workflow_call:
+    inputs:
+      ref:
+        description: Git ref to check when called by the release workflow.
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -23,6 +28,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -57,6 +64,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
       - uses: ./.github/actions/setup
       - uses: actions/download-artifact@v4
         with:

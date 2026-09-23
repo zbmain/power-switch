@@ -3,12 +3,23 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v<SemVer> tag to build.
+        required: true
+        type: string
+      repair_existing_release:
+        description: Add assets to an existing stable release only if it has no uploaded assets.
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref_name }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -20,19 +31,30 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          path: release-source
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
       - name: Check version and master ancestry
         shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          RELEASE_ROOT: ${{ github.workspace }}/release-source
         run: |
-          node scripts/release.mjs check "$GITHUB_REF_NAME"
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/master
+          node scripts/release.mjs check "$RELEASE_TAG"
+          test "$(git -C release-source rev-parse HEAD)" = "$(git -C release-source rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
+          git -C release-source merge-base --is-ancestor HEAD origin/master
 
   checks:
     name: Release quality gate
     needs: validate
     uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
 
   build:
     name: Bundle (${{ matrix.platform }})
@@ -70,23 +92,31 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          path: release-source
       - uses: ./.github/actions/setup
         with:
           targets: ${{ matrix.rust-targets }}
       - run: pnpm install --frozen-lockfile
+        working-directory: release-source
       - name: Build desktop bundles
         run: pnpm tauri build --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} -- --locked
+        working-directory: release-source
         env:
           CI: "true"
       - name: Collect named assets
         shell: bash
         env:
           RELEASE_PLATFORM: ${{ matrix.platform }}
-        run: node scripts/release.mjs collect "$GITHUB_REF_NAME" "$RELEASE_PLATFORM"
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          RELEASE_ROOT: ${{ github.workspace }}/release-source
+        run: node scripts/release.mjs collect "$RELEASE_TAG" "$RELEASE_PLATFORM"
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.platform }}
-          path: release-assets/*
+          path: release-source/release-assets/*
           if-no-files-found: error
           retention-days: 14
 
@@ -99,15 +129,22 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          path: release-source
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
       - uses: actions/download-artifact@v4
         with:
           pattern: release-*
-          path: release-assets/
+          path: release-source/release-assets/
           merge-multiple: true
       - name: Validate, upload draft and publish atomically
         run: node scripts/publish-release.mjs
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          RELEASE_ROOT: ${{ github.workspace }}/release-source
+          REPAIR_STABLE_RELEASE: ${{ inputs.repair_existing_release || false }}

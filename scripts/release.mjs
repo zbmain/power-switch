@@ -231,7 +231,9 @@ async function main() {
   const [command, tag, platform] = process.argv
     .slice(2)
     .filter((arg) => arg !== "--");
-  const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+  const root = resolve(
+    process.env.RELEASE_ROOT ?? fileURLToPath(new URL("..", import.meta.url)),
+  );
   const directory = join(root, "release-assets");
   if (command === "check") await checkVersion(root, tag);
   else if (command === "collect" && platform)

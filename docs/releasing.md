@@ -87,6 +87,17 @@ gh release view v0.1.1 --repo zbmain/power-switch
 
 Release 流程依次执行标签和版本检查、可复用 CI、五个平台构建、资产完整性检查、草稿上传与校验，最后才公开为预发布。CI 测试数据使用隔离目录，不运行会修改真实 WorkBuddy 等配置的手动验收工具。
 
+### 补齐已经手动创建的 Release
+
+如果先在 GitHub 页面发布 Release，页面只会自动附带源码 ZIP/TAR，不会编译桌面应用。对于已经存在、且没有人工上传资产的 `v0.1.0` 正式版，在 `master` 包含补建工作流后，进入 **Actions → Release → Run workflow**，选择 `master`，填写 `tag = v0.1.0`，勾选 `repair_existing_release`。也可在已登录 GitHub CLI 后运行：
+
+```sh
+gh workflow run release.yml --repo zbmain/power-switch --ref master -f tag=v0.1.0 -f repair_existing_release=true
+gh run list --repo zbmain/power-switch --workflow release.yml --limit 5
+```
+
+手动运行会从指定标签检出应用源码并执行完整测试与五平台构建。只有全部产物齐全才开始上传。补建模式仅接受没有上传资产的现有正式版，源码 ZIP/TAR 不算上传资产；它不会移动标签或改变正式版状态。如果某个平台失败，请先修复构建问题，再重试；如已有部分资产上传，需人工核对后处理，不会自动覆盖正式版文件。后续版本应先推送标签，让工作流自动创建带安装包的预发布，不需在网页中提前创建 Release。
+
 ## 安装包与校验
 
 | 系统                        | Runner           | Rust target               | 文件后缀                           |

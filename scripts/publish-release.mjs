@@ -5,12 +5,14 @@ import { fileURLToPath } from "node:url";
 import { checkVersion, sha256, writeChecksums } from "./release.mjs";
 
 /** 禁止修改正式版；已有预发布只允许同一提交的幂等重跑。 */
-export function assertPublishable(release, commit) {
+export function assertPublishable(release, commit, repairStable = false) {
   if (!release) return;
-  if (!release.draft && !release.prerelease)
+  if (!release.draft && !release.prerelease) {
+    if (repairStable && release.assets?.length === 0) return;
     throw new Error(
       "Refusing to overwrite an already published stable release",
     );
+  }
   if (release.target_commitish !== commit)
     throw new Error("Release already belongs to a different commit");
 }
@@ -55,24 +57,41 @@ async function verifyUploads(repository, releaseId, directory, names) {
 /** 通过草稿完成资产上传与验证，全部成功后才对用户公开为预发布。 */
 async function main() {
   const repository = process.env.GITHUB_REPOSITORY;
-  const tag = process.env.GITHUB_REF_NAME;
-  const commit = process.env.GITHUB_SHA;
+  const tag = process.env.RELEASE_TAG ?? process.env.GITHUB_REF_NAME;
+  const root = resolve(
+    process.env.RELEASE_ROOT ?? fileURLToPath(new URL("..", import.meta.url)),
+  );
+  const commit = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: root,
+    encoding: "utf8",
+  }).trim();
+  const repairStable = process.env.REPAIR_STABLE_RELEASE === "true";
   if (
     !process.env.GH_TOKEN ||
     !/^[\w.-]+\/[\w.-]+$/.test(repository ?? "") ||
     !/^[a-f0-9]{40}$/.test(commit ?? "")
   )
     throw new Error("Missing or invalid GitHub release environment");
-  const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
   const directory = join(root, "release-assets");
   await checkVersion(root, tag);
+  const tagCommit = execFileSync(
+    "git",
+    ["rev-parse", `refs/tags/${tag}^{commit}`],
+    {
+      cwd: root,
+      encoding: "utf8",
+    },
+  ).trim();
+  if (tagCommit !== commit)
+    throw new Error("Checked-out source does not match the release tag");
   const names = [...(await writeChecksums(directory, tag)), "SHA256SUMS"];
   const base = `/repos/${repository}/releases`;
   let release = await api(`${base}/tags/${encodeURIComponent(tag)}`, {
     allowMissing: true,
   });
-  assertPublishable(release, commit);
-  if (release && !release.draft) {
+  assertPublishable(release, commit, repairStable);
+  const repairingStable = release && !release.draft && !release.prerelease;
+  if (release && !release.draft && !repairingStable) {
     await verifyUploads(repository, release.id, directory, names);
     console.log(
       `Existing prerelease is complete and unchanged: ${release.html_url}`,
@@ -102,12 +121,16 @@ async function main() {
       ...names.map((name) => join(directory, name)),
       "--repo",
       repository,
-      "--clobber",
+      ...(repairingStable ? [] : ["--clobber"]),
     ],
     { stdio: "inherit" },
   );
   await verifyUploads(repository, release.id, directory, names);
   release = await api(`${base}/${release.id}`);
+  if (repairingStable) {
+    console.log(`Repaired stable release assets: ${release.html_url}`);
+    return;
+  }
   assertPublishable(release, commit);
   if (!release.draft)
     throw new Error("Release state changed during upload; refusing to publish");
