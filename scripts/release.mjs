@@ -189,10 +189,10 @@ export async function collectAssets(root, directory, tag, platform) {
       execFileSync(
         "lipo",
         [
+          join(app, "Contents/MacOS/power-switch"),
           "-verify_arch",
           "x86_64",
           "arm64",
-          join(app, "Contents/MacOS/power-switch"),
         ],
         { stdio: "inherit" },
       );
