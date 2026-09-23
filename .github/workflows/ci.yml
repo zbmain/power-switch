@@ -66,7 +66,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || github.ref }}
-      - uses: ./.github/actions/setup
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          path: .release-tools
+      - uses: ./.release-tools/.github/actions/setup
       - uses: actions/download-artifact@v4
         with:
           name: frontend-${{ github.run_id }}
